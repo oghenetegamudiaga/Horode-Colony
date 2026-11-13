@@ -5,6 +5,7 @@ import { generateSampleApexCarousel, generateSampleCleanCarousel } from '../lib/
 import { compressImageForAnalysis } from '../lib/imageUtils';
 import { AccessCodeDialog } from '../components/AccessCodeDialog';
 import { fetchWithAccessCode } from '../lib/apiClient';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 interface NewCheckViewProps {
   onNavigate: (route: string) => void;
@@ -138,8 +139,8 @@ export function NewCheckView({
         if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
           try {
             const pdfjsLib = await import('pdfjs-dist');
-            // Configure worker
-            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+            // Configure worker locally
+            pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;

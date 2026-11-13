@@ -1,6 +1,0 @@
-{
-  "name": "Horode Proof",
-  "description": "Quiet, fast proofreader for social media carousel and slide designs. Detect typos, grammar, and brand consistency issues before clients do.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
