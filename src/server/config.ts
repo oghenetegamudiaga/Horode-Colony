@@ -64,3 +64,4 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
 
 export const config = loadConfig();
 export type Config = typeof config;
+
