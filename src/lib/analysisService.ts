@@ -1,6 +1,10 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { config } from '../server/config';
-import { sanitizePromptText } from '../server/guards';
+import {
+  sanitizePromptText,
+  modelSlideOutputSchema,
+  modelCrossOutputSchema,
+} from '../server/guards';
 
 export interface AnalyzeSlideParams {
   imageBase64: string;
@@ -8,7 +12,7 @@ export interface AnalyzeSlideParams {
   strictness?: 'relaxed' | 'standard' | 'strict';
   languageVariant?: 'british' | 'american' | 'nigerian';
   dictionaryTerms?: Array<{ term: string; note?: string }>;
-  ignoreRules?: Array<{ original: string; ruleType: string }>;
+  ignoreRules?: Array<{ original: string; ruleType?: string }>;
   slidePosition?: number;
 }
 
@@ -17,7 +21,7 @@ export interface AnalyzeCrossSlideParams {
   strictness?: 'relaxed' | 'standard' | 'strict';
   languageVariant?: 'british' | 'american' | 'nigerian';
   dictionaryTerms?: Array<{ term: string; note?: string }>;
-  ignoreRules?: Array<{ original: string; ruleType: string }>;
+  ignoreRules?: Array<{ original: string; ruleType?: string }>;
 }
 
 function getAiClient(): GoogleGenAI {
@@ -176,90 +180,105 @@ ${ignorePrompt}`;
 
   const promptText = `Analyze Slide #${slidePosition} carefully. Extract all text, identify any unreadable regions, and flag all issues according to strictness level '${strictness}'. Output strict JSON matching the schema.`;
 
-  const response = await generateContentWithRetry(ai, {
-    contents: {
-      parts: [
-        {
-          inlineData: {
-            mimeType: detectedMime,
-            data: cleanBase64,
-          },
-        },
-        { text: promptText },
-      ],
-    },
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          slide_text: {
-            type: Type.STRING,
-            description: 'Full recognized text on the slide in reading order',
-          },
-          unreadable_regions: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                description: { type: Type.STRING },
-                bbox: {
-                  type: Type.ARRAY,
-                  items: { type: Type.NUMBER },
-                  description: '[x, y, w, h] normalized 0..1',
-                },
-              },
-              required: ['description', 'bbox'],
-            },
-          },
-          issues: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                original: { type: Type.STRING },
-                suggestion: { type: Type.STRING },
-                reason: { type: Type.STRING },
-                confidence: { type: Type.STRING },
-                bbox: {
-                  type: Type.ARRAY,
-                  items: { type: Type.NUMBER },
-                  description: '[x, y, w, h] normalized 0..1',
-                },
-              },
-              required: ['type', 'original', 'suggestion', 'reason', 'confidence'],
-            },
-          },
-        },
-        required: ['slide_text', 'unreadable_regions', 'issues'],
-      },
-    },
-  });
+  let validatedData: any = null;
 
-  const rawText = cleanJsonString(response.text || '{}');
-  let parsed: any;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch (e) {
-    console.error('JSON parse error from Gemini output:', rawText);
-    parsed = { slide_text: '', unreadable_regions: [], issues: [] };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const currentPrompt =
+        attempt === 0
+          ? promptText
+          : `${promptText}\nIMPORTANT RETRY: Output strictly valid JSON with keys: slide_text, unreadable_regions, issues.`;
+
+      const response = await generateContentWithRetry(ai, {
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: detectedMime,
+                data: cleanBase64,
+              },
+            },
+            { text: currentPrompt },
+          ],
+        },
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              slide_text: {
+                type: Type.STRING,
+                description: 'Full recognized text on the slide in reading order',
+              },
+              unreadable_regions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    description: { type: Type.STRING },
+                    bbox: {
+                      type: Type.ARRAY,
+                      items: { type: Type.NUMBER },
+                      description: '[x, y, w, h] normalized 0..1',
+                    },
+                  },
+                  required: ['description', 'bbox'],
+                },
+              },
+              issues: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    original: { type: Type.STRING },
+                    suggestion: { type: Type.STRING },
+                    reason: { type: Type.STRING },
+                    confidence: { type: Type.STRING },
+                    bbox: {
+                      type: Type.ARRAY,
+                      items: { type: Type.NUMBER },
+                      description: '[x, y, w, h] normalized 0..1',
+                    },
+                  },
+                  required: ['type', 'original', 'suggestion', 'reason', 'confidence'],
+                },
+              },
+            },
+            required: ['slide_text', 'unreadable_regions', 'issues'],
+          },
+        },
+      });
+
+      const rawText = cleanJsonString(response.text || '{}');
+      const parsed = JSON.parse(rawText);
+      const validation = modelSlideOutputSchema.safeParse(parsed);
+      if (validation.success) {
+        validatedData = validation.data;
+        break;
+      }
+      console.warn(`Model slide output schema validation failed on attempt ${attempt + 1}`);
+    } catch (e: any) {
+      if (attempt === 1) {
+        throw e;
+      }
+      console.warn(`Attempt ${attempt + 1} failed, retrying once...`);
+    }
   }
 
-  const slideText: string = parsed.slide_text || '';
-  const unreadableRegions = Array.isArray(parsed.unreadable_regions)
-    ? parsed.unreadable_regions.map((r: any) => ({
-        description: r.description || "Couldn't read this clearly",
-        bbox: Array.isArray(r.bbox) && r.bbox.length === 4 ? r.bbox : [0.1, 0.1, 0.3, 0.1],
-      }))
-    : [];
+  if (!validatedData) {
+    throw new Error('Model output failed schema validation');
+  }
+
+  const slideText: string = validatedData.slide_text || '';
+  const unreadableRegions = validatedData.unreadable_regions;
 
   // Filter against client dictionary & ignore rules
   const dictionaryTermsLower = dictionaryTerms.map(d => d.term.trim().toLowerCase());
   const ignoreRulesLower = ignoreRules.map(r => r.original.trim().toLowerCase());
 
-  const filteredIssues = (Array.isArray(parsed.issues) ? parsed.issues : [])
+  const filteredIssues = validatedData.issues
     .filter((issue: any) => {
       if (!issue.original) return false;
       const origLower = issue.original.trim().toLowerCase();
@@ -342,51 +361,72 @@ ${dictionaryPrompt}`;
 
   const promptText = `Analyze these ${slides.length} slides for cross-slide inconsistencies:\n\n${slidesSummary}`;
 
-  const response = await generateContentWithRetry(ai, {
-    contents: promptText,
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          issues: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                original: { type: Type.STRING },
-                suggestion: { type: Type.STRING },
-                reason: { type: Type.STRING },
-                confidence: { type: Type.STRING },
-                affected_slides: {
-                  type: Type.ARRAY,
-                  items: { type: Type.INTEGER },
-                  description: 'Slide position numbers (e.g. [1, 4])',
+  let validatedCrossData: any = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const currentPrompt =
+        attempt === 0
+          ? promptText
+          : `${promptText}\nIMPORTANT RETRY: Output strictly valid JSON matching the schema with key: issues.`;
+
+      const response = await generateContentWithRetry(ai, {
+        contents: currentPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              issues: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    original: { type: Type.STRING },
+                    suggestion: { type: Type.STRING },
+                    reason: { type: Type.STRING },
+                    confidence: { type: Type.STRING },
+                    affected_slides: {
+                      type: Type.ARRAY,
+                      items: { type: Type.INTEGER },
+                      description: 'Slide position numbers (e.g. [1, 4])',
+                    },
+                  },
+                  required: ['type', 'original', 'suggestion', 'reason', 'confidence', 'affected_slides'],
                 },
               },
-              required: ['type', 'original', 'suggestion', 'reason', 'confidence', 'affected_slides'],
             },
+            required: ['issues'],
           },
         },
-        required: ['issues'],
-      },
-    },
-  });
+      });
 
-  const rawText = cleanJsonString(response.text || '{"issues":[]}');
-  let parsed: any;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    parsed = { issues: [] };
+      const rawText = cleanJsonString(response.text || '{"issues":[]}');
+      const parsed = JSON.parse(rawText);
+      const validation = modelCrossOutputSchema.safeParse(parsed);
+      if (validation.success) {
+        validatedCrossData = validation.data;
+        break;
+      }
+      console.warn(`Model cross-slide output schema validation failed on attempt ${attempt + 1}`);
+    } catch (e: any) {
+      if (attempt === 1) {
+        throw e;
+      }
+      console.warn(`Attempt ${attempt + 1} failed, retrying once...`);
+    }
+  }
+
+  if (!validatedCrossData) {
+    throw new Error('Cross-slide model output failed schema validation');
   }
 
   const dictionaryTermsLower = (dictionaryTerms || []).map(d => d.term.trim().toLowerCase());
   const ignoreRulesLower = (ignoreRules || []).map(r => r.original.trim().toLowerCase());
 
-  const issues = (Array.isArray(parsed.issues) ? parsed.issues : [])
+  const issues = validatedCrossData.issues
     .filter((i: any) => {
       if (!i.original) return false;
       const origLower = i.original.trim().toLowerCase();

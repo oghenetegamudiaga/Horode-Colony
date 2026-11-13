@@ -3,6 +3,8 @@ import { store } from '../lib/store';
 import { StrictnessLevel, LanguageVariant, CheckRecord, SlideData } from '../types';
 import { generateSampleApexCarousel, generateSampleCleanCarousel } from '../lib/goldenSet';
 import { compressImageForAnalysis } from '../lib/imageUtils';
+import { AccessCodeDialog } from '../components/AccessCodeDialog';
+import { fetchWithAccessCode } from '../lib/apiClient';
 
 interface NewCheckViewProps {
   onNavigate: (route: string) => void;
@@ -50,6 +52,16 @@ export function NewCheckView({
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [accessCodeResolver, setAccessCodeResolver] = useState<{
+    resolve: (code: string | null) => void;
+  } | null>(null);
+
+  const requestAccessCode = (): Promise<string | null> => {
+    return new Promise(resolve => {
+      setAccessCodeResolver({ resolve });
+    });
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -330,19 +342,23 @@ export function NewCheckView({
         // Compress to ~150-250KB JPEG to stay well within Vercel's 4.5MB limit
         const optimizedImage = await compressImageForAnalysis(slide.imageUrl);
 
-        const response = await fetch('/api/analyze-slide', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: optimizedImage,
-            mimeType: 'image/jpeg',
-            strictness: strictLevel,
-            languageVariant: langVariant,
-            dictionaryTerms,
-            ignoreRules,
-            slidePosition: slide.position,
-          }),
-        });
+        const response = await fetchWithAccessCode(
+          '/api/analyze-slide',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64: optimizedImage,
+              mimeType: 'image/jpeg',
+              strictness: strictLevel,
+              languageVariant: langVariant,
+              dictionaryTerms,
+              ignoreRules,
+              slidePosition: slide.position,
+            }),
+          },
+          requestAccessCode
+        );
 
         if (!response.ok) {
           let errorText = `Server error (HTTP ${response.status})`;
@@ -383,20 +399,24 @@ export function NewCheckView({
 
     if (doneSlides.length >= 2) {
       try {
-        const crossRes = await fetch('/api/analyze-cross-slide', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            slides: doneSlides.map(s => ({
-              position: s.position,
-              text: s.slideText,
-            })),
-            strictness: strictLevel,
-            languageVariant: langVariant,
-            dictionaryTerms,
-            ignoreRules,
-          }),
-        });
+        const crossRes = await fetchWithAccessCode(
+          '/api/analyze-cross-slide',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              slides: doneSlides.map(s => ({
+                position: s.position,
+                text: s.slideText,
+              })),
+              strictness: strictLevel,
+              languageVariant: langVariant,
+              dictionaryTerms,
+              ignoreRules,
+            }),
+          },
+          requestAccessCode
+        );
 
         if (crossRes.ok) {
           const crossData = await crossRes.json();
@@ -680,6 +700,18 @@ export function NewCheckView({
           </button>
         </div>
       </div>
+
+      <AccessCodeDialog
+        isOpen={accessCodeResolver !== null}
+        onContinue={code => {
+          accessCodeResolver?.resolve(code);
+          setAccessCodeResolver(null);
+        }}
+        onCancel={() => {
+          accessCodeResolver?.resolve(null);
+          setAccessCodeResolver(null);
+        }}
+      />
     </div>
   );
 }

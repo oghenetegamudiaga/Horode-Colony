@@ -12,13 +12,11 @@ export function SettingsView({ onShowShortcuts, onShowToast }: SettingsViewProps
 
   const [apiStatus, setApiStatus] = useState<{
     loading: boolean;
-    hasKey: boolean | null;
-    keyPreview: string | null;
+    connected: boolean;
     error?: string;
   }>({
     loading: true,
-    hasKey: null,
-    keyPreview: null,
+    connected: false,
   });
 
   const checkApiHealth = async () => {
@@ -31,14 +29,12 @@ export function SettingsView({ onShowShortcuts, onShowToast }: SettingsViewProps
       const data = await res.json();
       setApiStatus({
         loading: false,
-        hasKey: !!data.hasGeminiKey,
-        keyPreview: data.keyPreview,
+        connected: data?.status === 'ok',
       });
     } catch (err: any) {
       setApiStatus({
         loading: false,
-        hasKey: false,
-        keyPreview: null,
+        connected: false,
         error: err.message || 'Unable to reach backend /api/health',
       });
     }
@@ -83,30 +79,15 @@ export function SettingsView({ onShowShortcuts, onShowToast }: SettingsViewProps
         <div className="pt-2">
           {apiStatus.loading ? (
             <div className="text-[12.5px] text-[#9B9B9B]">Checking API status...</div>
-          ) : apiStatus.hasKey ? (
+          ) : apiStatus.connected ? (
             <div className="flex items-center gap-2.5 text-[12.5px] text-[#4DAB9A]">
               <span className="w-2 h-2 rounded-full bg-[#4DAB9A] inline-block" />
-              <span className="font-medium">Active & Connected</span>
-              {apiStatus.keyPreview && (
-                <span className="text-[#9B9B9B] font-mono text-[11px] ml-1">
-                  (Key: {apiStatus.keyPreview})
-                </span>
-              )}
+              <span className="font-medium">Analysis: connected</span>
             </div>
           ) : (
-            <div className="space-y-2 p-3.5 rounded-[8px] bg-[#3D2224]/70 border border-[#ff8a80]/30 text-[12.5px]">
-              <div className="flex items-center gap-2 text-[#ff8a80] font-semibold">
-                <span className="w-2 h-2 rounded-full bg-[#ff8a80] inline-block" />
-                <span>No GEMINI_API_KEY detected by server</span>
-              </div>
-              <p className="text-[#9B9B9B] leading-relaxed">
-                If deployed to <strong className="text-white">Vercel</strong>: Go to your project <strong className="text-white">Settings &gt; Environment Variables</strong>, add <code className="text-[#EBEBEB] font-mono bg-black/40 px-1 py-0.5 rounded">GEMINI_API_KEY</code>, then trigger a <strong className="text-white">Redeploy</strong>.
-              </p>
-              {apiStatus.error && (
-                <div className="text-[11px] text-[#ff8a80]/80 font-mono">
-                  Diagnostics: {apiStatus.error}
-                </div>
-              )}
+            <div className="flex items-center gap-2.5 text-[12.5px] text-[#ff8a80]">
+              <span className="w-2 h-2 rounded-full bg-[#ff8a80] inline-block" />
+              <span className="font-medium">Analysis: not reachable</span>
             </div>
           )}
         </div>

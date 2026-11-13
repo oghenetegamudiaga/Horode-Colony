@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { handleAnalyzeSlide, handleAnalyzeCrossSlide } from './src/lib/analysisService';
+import { handleAnalyzeSlideRoute, handleAnalyzeCrossSlideRoute } from './src/server/guards';
 
 dotenv.config();
 
@@ -32,40 +32,17 @@ app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Health / Status endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
-  const hasKey = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0;
-  res.json({
-    status: 'ok',
-    hasGeminiKey: hasKey,
-    keyPreview: hasKey ? `${process.env.GEMINI_API_KEY!.slice(0, 4)}...${process.env.GEMINI_API_KEY!.slice(-4)}` : null,
-  });
+  res.json({ status: 'ok' });
 });
 
 // POST /api/analyze-slide
-app.post('/api/analyze-slide', async (req: Request, res: Response) => {
-  try {
-    const result = await handleAnalyzeSlide(req.body);
-    res.json(result);
-  } catch (err: any) {
-    console.error('Error in /api/analyze-slide:', err);
-    res.status(500).json({
-      error: 'Slide analysis encountered an issue.',
-      details: err?.message || 'Unknown error occurred while contacting AI model.',
-    });
-  }
+app.all('/api/analyze-slide', async (req: Request, res: Response) => {
+  await handleAnalyzeSlideRoute(req, res);
 });
 
 // POST /api/analyze-cross-slide
-app.post('/api/analyze-cross-slide', async (req: Request, res: Response) => {
-  try {
-    const result = await handleAnalyzeCrossSlide(req.body);
-    res.json(result);
-  } catch (err: any) {
-    console.error('Error in /api/analyze-cross-slide:', err);
-    res.status(500).json({
-      error: 'Cross-slide analysis encountered an issue.',
-      details: err?.message || 'Unknown error',
-    });
-  }
+app.all('/api/analyze-cross-slide', async (req: Request, res: Response) => {
+  await handleAnalyzeCrossSlideRoute(req, res);
 });
 
 // Dev vs Prod Vite mounting

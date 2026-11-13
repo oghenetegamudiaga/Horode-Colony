@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { config } from './config';
+import { handleAnalyzeSlide, handleAnalyzeCrossSlide } from '../lib/analysisService';
 
 export type SupportedImageType = 'image/jpeg' | 'image/png' | 'image/webp';
 
@@ -342,3 +343,133 @@ export const modelCrossIssueSchema = z.object({
 export const modelCrossOutputSchema = z.object({
   issues: z.array(modelCrossIssueSchema).default([]),
 });
+
+/**
+ * Shared route handler for POST /api/analyze-slide used by both api/analyze-slide.ts and server.ts
+ */
+export async function handleAnalyzeSlideRoute(req: any, res: any): Promise<void> {
+  const corsOk = applyCorsHeaders(req, res);
+  if (!corsOk) {
+    return res.status(403).json({ error: 'Origin not allowed.', code: 'FORBIDDEN_ORIGIN' });
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed.', code: 'METHOD_NOT_ALLOWED' });
+  }
+
+  // JSON body size cap: reject over MAX_IMAGE_BYTES * 1.4 with 413
+  const maxBodyBytes = Math.floor(config.MAX_IMAGE_BYTES * 1.4);
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (contentLength > maxBodyBytes) {
+    return res.status(413).json({ error: 'Payload too large.', code: 'PAYLOAD_TOO_LARGE' });
+  }
+
+  // Access check
+  const accessHeader = req.headers['x-access-code'];
+  const accessCode = Array.isArray(accessHeader) ? accessHeader[0] : accessHeader;
+  const accessResult = checkAccess(accessCode);
+  if (!accessResult.ok) {
+    return res.status(accessResult.status || 401).json(accessResult.error);
+  }
+
+  // Rate limiter check
+  const ip = extractClientIp(req);
+  const rateResult = checkRateLimit(ip, 'analyze-slide');
+  if (!rateResult.allowed) {
+    res.setHeader('Retry-After', String(rateResult.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many requests. Please try again shortly.', code: 'RATE_LIMITED' });
+  }
+
+  // Schema validation
+  const parseResult = analyzeSlideRequestSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: 'Invalid request payload.', code: 'INVALID_PAYLOAD' });
+  }
+
+  const validatedParams = parseResult.data;
+  const imgCheck = decodeAndValidateImage(validatedParams.imageBase64, config.MAX_IMAGE_BYTES);
+  if (!imgCheck.valid) {
+    if (imgCheck.errorCode === 'IMAGE_TOO_LARGE') {
+      return res.status(413).json({ error: 'Image too large.', code: 'IMAGE_TOO_LARGE' });
+    }
+    return res.status(400).json({ error: 'Invalid or unsupported image.', code: 'INVALID_IMAGE' });
+  }
+
+  try {
+    const result = await handleAnalyzeSlide({
+      ...validatedParams,
+      mimeType: imgCheck.mimeType,
+    });
+    return res.status(200).json(result);
+  } catch (err: any) {
+    // Log server-side WITHOUT slide text, image data, dictionary content, or API key
+    console.error('Slide analysis failed on server:', err?.name || 'Error');
+    return res.status(500).json({
+      error: "Slide analysis didn't finish. Try again.",
+      code: 'ANALYSIS_FAILED',
+    });
+  }
+}
+
+/**
+ * Shared route handler for POST /api/analyze-cross-slide used by both api/analyze-cross-slide.ts and server.ts
+ */
+export async function handleAnalyzeCrossSlideRoute(req: any, res: any): Promise<void> {
+  const corsOk = applyCorsHeaders(req, res);
+  if (!corsOk) {
+    return res.status(403).json({ error: 'Origin not allowed.', code: 'FORBIDDEN_ORIGIN' });
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed.', code: 'METHOD_NOT_ALLOWED' });
+  }
+
+  // JSON body size cap
+  const maxBodyBytes = Math.floor(config.MAX_IMAGE_BYTES * 1.4);
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (contentLength > maxBodyBytes) {
+    return res.status(413).json({ error: 'Payload too large.', code: 'PAYLOAD_TOO_LARGE' });
+  }
+
+  // Access check
+  const accessHeader = req.headers['x-access-code'];
+  const accessCode = Array.isArray(accessHeader) ? accessHeader[0] : accessHeader;
+  const accessResult = checkAccess(accessCode);
+  if (!accessResult.ok) {
+    return res.status(accessResult.status || 401).json(accessResult.error);
+  }
+
+  // Rate limiter check
+  const ip = extractClientIp(req);
+  const rateResult = checkRateLimit(ip, 'analyze-cross-slide');
+  if (!rateResult.allowed) {
+    res.setHeader('Retry-After', String(rateResult.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many requests. Please try again shortly.', code: 'RATE_LIMITED' });
+  }
+
+  // Schema validation
+  const parseResult = analyzeCrossSlideRequestSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: 'Invalid request payload.', code: 'INVALID_PAYLOAD' });
+  }
+
+  try {
+    const result = await handleAnalyzeCrossSlide(parseResult.data);
+    return res.status(200).json(result);
+  } catch (err: any) {
+    // Log server-side WITHOUT slide text, image data, dictionary content, or API key
+    console.error('Cross-slide analysis failed on server:', err?.name || 'Error');
+    return res.status(500).json({
+      error: "Cross-slide analysis didn't finish. Try again.",
+      code: 'ANALYSIS_FAILED',
+    });
+  }
+}

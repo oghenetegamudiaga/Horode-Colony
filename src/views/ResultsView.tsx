@@ -11,7 +11,9 @@ import {
 import { IssueTag } from '../components/IssueTag';
 import { EllipsisGlyph, ChevronGlyph } from '../components/Glyphs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { AccessCodeDialog } from '../components/AccessCodeDialog';
 import { compressImageForAnalysis } from '../lib/imageUtils';
+import { fetchWithAccessCode } from '../lib/apiClient';
 
 interface ResultsViewProps {
   checkId: string;
@@ -38,6 +40,15 @@ export function ResultsView({
   const [typeFilter, setTypeFilter] = useState<IssueType | 'all'>('all');
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [accessCodeResolver, setAccessCodeResolver] = useState<{
+    resolve: (code: string | null) => void;
+  } | null>(null);
+
+  const requestAccessCode = (): Promise<string | null> => {
+    return new Promise(resolve => {
+      setAccessCodeResolver({ resolve });
+    });
+  };
   const [openCardOverflowId, setOpenCardOverflowId] = useState<string | null>(null);
   const [showHeaderOverflow, setShowHeaderOverflow] = useState(false);
 
@@ -252,19 +263,23 @@ export function ResultsView({
     try {
       const optimizedImage = await compressImageForAnalysis(targetSlide.imageUrl);
 
-      const response = await fetch('/api/analyze-slide', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: optimizedImage,
-          mimeType: 'image/jpeg',
-          strictness: check.strictness,
-          languageVariant: check.languageVariant,
-          dictionaryTerms: store.getDictionaryForClient(check.clientId),
-          ignoreRules: store.getIgnoreRulesForClient(check.clientId),
-          slidePosition: targetSlide.position,
-        }),
-      });
+      const response = await fetchWithAccessCode(
+        '/api/analyze-slide',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: optimizedImage,
+            mimeType: 'image/jpeg',
+            strictness: check.strictness,
+            languageVariant: check.languageVariant,
+            dictionaryTerms: store.getDictionaryForClient(check.clientId),
+            ignoreRules: store.getIgnoreRulesForClient(check.clientId),
+            slidePosition: targetSlide.position,
+          }),
+        },
+        requestAccessCode
+      );
 
       if (!response.ok) {
         let errorText = `Server error (HTTP ${response.status})`;
@@ -905,6 +920,19 @@ export function ResultsView({
         isDestructive={true}
         onConfirm={handleDeleteCheck}
         onCancel={() => setShowDeleteDialog(false)}
+      />
+
+      {/* Access Code Dialog */}
+      <AccessCodeDialog
+        isOpen={accessCodeResolver !== null}
+        onContinue={code => {
+          accessCodeResolver?.resolve(code);
+          setAccessCodeResolver(null);
+        }}
+        onCancel={() => {
+          accessCodeResolver?.resolve(null);
+          setAccessCodeResolver(null);
+        }}
       />
     </div>
   );
