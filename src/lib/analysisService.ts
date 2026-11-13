@@ -1,7 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { config } from '../server/config';
 
 export interface AnalyzeSlideParams {
   imageBase64: string;
@@ -22,20 +20,13 @@ export interface AnalyzeCrossSlideParams {
 }
 
 function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY || '';
+  const apiKey = config.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error(
-      'GEMINI_API_KEY is missing. If you are on Vercel, please add GEMINI_API_KEY in Project Settings > Environment Variables and redeploy.'
-    );
+    throw new Error('GEMINI_API_KEY is missing.');
   }
 
   return new GoogleGenAI({
     apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
   });
 }
 
@@ -50,7 +41,10 @@ function cleanJsonString(str: string): string {
 }
 
 async function generateContentWithRetry(ai: GoogleGenAI, requestConfig: any) {
-  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const models = config.ANALYSIS_MODELS;
+  if (!models || models.length === 0) {
+    throw new Error('No analysis models configured. Please set ANALYSIS_MODELS.');
+  }
   let lastError: any;
 
   for (const model of models) {
@@ -85,7 +79,7 @@ async function generateContentWithRetry(ai: GoogleGenAI, requestConfig: any) {
         msg.includes('permission_denied')
       ) {
         throw new Error(
-          'Gemini API key is invalid or lacks required permissions. Check your key in Google AI Studio.'
+          'Gemini API key is invalid or lacks required permissions.'
         );
       }
     }
