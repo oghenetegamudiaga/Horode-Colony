@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { config } from '../server/config';
+import { sanitizePromptText } from '../server/guards';
 
 export interface AnalyzeSlideParams {
   imageBase64: string;
@@ -116,12 +117,20 @@ export async function handleAnalyzeSlide(params: AnalyzeSlideParams) {
 
   const dictionaryPrompt =
     dictionaryTerms.length > 0
-      ? `\nCLIENT BRAND DICTIONARY (These exact terms/names/handles are approved and MUST NEVER be flagged as errors):\n${dictionaryTerms.map(t => `- "${t.term}"${t.note ? ` (${t.note})` : ''}`).join('\n')}`
+      ? `\nCLIENT BRAND DICTIONARY (These exact terms/names/handles are approved and MUST NEVER be flagged as errors):\n${dictionaryTerms
+          .map(t => {
+            const cleanTerm = sanitizePromptText(t.term, 100);
+            const cleanNote = t.note ? ` (${sanitizePromptText(t.note, 300)})` : '';
+            return `- "${cleanTerm}"${cleanNote}`;
+          })
+          .join('\n')}`
       : '';
 
   const ignorePrompt =
     ignoreRules.length > 0
-      ? `\nCLIENT IGNORE LIST (These phrases were previously marked as intentional and MUST NEVER be flagged):\n${ignoreRules.map(r => `- "${r.original}"`).join('\n')}`
+      ? `\nCLIENT IGNORE LIST (These phrases were previously marked as intentional and MUST NEVER be flagged):\n${ignoreRules
+          .map(r => `- "${sanitizePromptText(r.original, 200)}"`)
+          .join('\n')}`
       : '';
 
   const strictnessInstructions = {
@@ -312,7 +321,9 @@ export async function handleAnalyzeCrossSlide(params: AnalyzeCrossSlideParams) {
 
   const dictionaryPrompt =
     dictionaryTerms.length > 0
-      ? `\nCLIENT BRAND DICTIONARY:\n${dictionaryTerms.map(t => `- "${t.term}"`).join('\n')}`
+      ? `\nCLIENT BRAND DICTIONARY:\n${dictionaryTerms
+          .map(t => `- "${sanitizePromptText(t.term, 100)}"`)
+          .join('\n')}`
       : '';
 
   const systemInstruction = `You are Horode Proof's cross-slide consistency analyzer.
