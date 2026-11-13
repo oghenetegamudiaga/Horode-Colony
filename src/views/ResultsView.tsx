@@ -11,6 +11,7 @@ import {
 import { IssueTag } from '../components/IssueTag';
 import { EllipsisGlyph, ChevronGlyph } from '../components/Glyphs';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { compressImageForAnalysis } from '../lib/imageUtils';
 
 interface ResultsViewProps {
   checkId: string;
@@ -245,15 +246,18 @@ export function ResultsView({
     if (!targetSlide) return;
 
     targetSlide.status = 'reading';
+    targetSlide.errorMessage = undefined;
     store.updateCheck(check.id, { slides: [...check.slides] });
 
     try {
+      const optimizedImage = await compressImageForAnalysis(targetSlide.imageUrl);
+
       const response = await fetch('/api/analyze-slide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: targetSlide.imageUrl,
-          mimeType: 'image/png',
+          imageBase64: optimizedImage,
+          mimeType: 'image/jpeg',
           strictness: check.strictness,
           languageVariant: check.languageVariant,
           dictionaryTerms: store.getDictionaryForClient(check.clientId),
@@ -262,7 +266,19 @@ export function ResultsView({
         }),
       });
 
-      if (!response.ok) throw new Error('Analysis failed');
+      if (!response.ok) {
+        let errorText = `Server error (HTTP ${response.status})`;
+        try {
+          const errJson = await response.json();
+          errorText = errJson.details || errJson.error || errorText;
+        } catch {
+          const raw = await response.text();
+          if (raw.includes('<!doctype') || response.status === 404) {
+            errorText = 'API route not found (404). Check Vercel serverless function deployment.';
+          }
+        }
+        throw new Error(errorText);
+      }
 
       const data = await response.json();
       targetSlide.status = 'done';
@@ -279,10 +295,11 @@ export function ResultsView({
         status: 'completed',
       });
       onShowToast(`Slide ${targetSlide.position} finished`);
-    } catch {
+    } catch (err: any) {
       targetSlide.status = 'failed';
+      targetSlide.errorMessage = err?.message || 'Failed to analyze slide.';
       store.updateCheck(check.id, { slides: [...check.slides] });
-      onShowToast(`Slide ${targetSlide.position} failed to finish`);
+      onShowToast(`Slide ${targetSlide.position}: ${targetSlide.errorMessage}`);
     }
   };
 
@@ -521,6 +538,24 @@ export function ResultsView({
                 {currentSlideIssues.length === 0 && currentSlide.status === 'done' && (
                   <div className="absolute bottom-4 left-4 right-4 py-2 px-3 rounded-[6px] bg-black/75 backdrop-blur-xs text-[12px] text-[#4DAB9A] text-center font-medium">
                     Nothing to fix. This slide is clean.
+                  </div>
+                )}
+
+                {/* Failed slide error overlay */}
+                {currentSlide.status === 'failed' && (
+                  <div className="absolute inset-x-4 bottom-4 p-3.5 rounded-[8px] bg-[#3D2224]/95 border border-[#ff8a80]/40 text-[#ff8a80] text-[12.5px] z-20 backdrop-blur-xs shadow-xl flex items-center justify-between">
+                    <div className="pr-3">
+                      <div className="font-semibold text-white text-[13px]">Slide Analysis Incomplete</div>
+                      <div className="text-[#ff8a80] text-[12px] mt-0.5 leading-snug">
+                        {currentSlide.errorMessage || 'Server or API key issue encountered.'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRetrySlide(currentSlideIndex)}
+                      className="px-3 py-1.5 rounded-[4px] bg-[#ff8a80] text-black font-semibold text-[11.5px] hover:bg-white shrink-0 transition-colors"
+                    >
+                      Retry Slide
+                    </button>
                   </div>
                 )}
               </div>

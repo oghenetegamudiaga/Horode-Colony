@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/store';
 
 interface SettingsViewProps {
@@ -9,6 +9,44 @@ interface SettingsViewProps {
 export function SettingsView({ onShowShortcuts, onShowToast }: SettingsViewProps) {
   const currentTheme = store.getTheme();
   const [retentionDays, setRetentionDays] = useState(30);
+
+  const [apiStatus, setApiStatus] = useState<{
+    loading: boolean;
+    hasKey: boolean | null;
+    keyPreview: string | null;
+    error?: string;
+  }>({
+    loading: true,
+    hasKey: null,
+    keyPreview: null,
+  });
+
+  const checkApiHealth = async () => {
+    setApiStatus(prev => ({ ...prev, loading: true, error: undefined }));
+    try {
+      const res = await fetch('/api/health');
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setApiStatus({
+        loading: false,
+        hasKey: !!data.hasGeminiKey,
+        keyPreview: data.keyPreview,
+      });
+    } catch (err: any) {
+      setApiStatus({
+        loading: false,
+        hasKey: false,
+        keyPreview: null,
+        error: err.message || 'Unable to reach backend /api/health',
+      });
+    }
+  };
+
+  useEffect(() => {
+    checkApiHealth();
+  }, []);
 
   const handleThemeChange = (theme: 'dark' | 'light' | 'system') => {
     store.setTheme(theme);
@@ -23,6 +61,56 @@ export function SettingsView({ onShowShortcuts, onShowToast }: SettingsViewProps
           Workspace appearance, shortcuts, and confidentiality preferences.
         </p>
       </div>
+
+      {/* Vision AI API Status Section */}
+      <section className="space-y-3 p-5 rounded-[12px] bg-[#202020] border border-[#2F2F2F]">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[#EBEBEB]">Vision AI Connection</h2>
+            <p className="text-[12.5px] text-[#9B9B9B] mt-0.5">
+              Powers automatic text extraction, typography reading, and error detection.
+            </p>
+          </div>
+          <button
+            onClick={checkApiHealth}
+            disabled={apiStatus.loading}
+            className="h-8 px-3 rounded-[6px] bg-[#252525] hover:bg-[#2C2C2C] text-[#EBEBEB] text-[12px] font-medium border border-[#2F2F2F] transition-colors"
+          >
+            {apiStatus.loading ? 'Checking...' : 'Test connection'}
+          </button>
+        </div>
+
+        <div className="pt-2">
+          {apiStatus.loading ? (
+            <div className="text-[12.5px] text-[#9B9B9B]">Checking API status...</div>
+          ) : apiStatus.hasKey ? (
+            <div className="flex items-center gap-2.5 text-[12.5px] text-[#4DAB9A]">
+              <span className="w-2 h-2 rounded-full bg-[#4DAB9A] inline-block" />
+              <span className="font-medium">Active & Connected</span>
+              {apiStatus.keyPreview && (
+                <span className="text-[#9B9B9B] font-mono text-[11px] ml-1">
+                  (Key: {apiStatus.keyPreview})
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2 p-3.5 rounded-[8px] bg-[#3D2224]/70 border border-[#ff8a80]/30 text-[12.5px]">
+              <div className="flex items-center gap-2 text-[#ff8a80] font-semibold">
+                <span className="w-2 h-2 rounded-full bg-[#ff8a80] inline-block" />
+                <span>No GEMINI_API_KEY detected by server</span>
+              </div>
+              <p className="text-[#9B9B9B] leading-relaxed">
+                If deployed to <strong className="text-white">Vercel</strong>: Go to your project <strong className="text-white">Settings &gt; Environment Variables</strong>, add <code className="text-[#EBEBEB] font-mono bg-black/40 px-1 py-0.5 rounded">GEMINI_API_KEY</code>, then trigger a <strong className="text-white">Redeploy</strong>.
+              </p>
+              {apiStatus.error && (
+                <div className="text-[11px] text-[#ff8a80]/80 font-mono">
+                  Diagnostics: {apiStatus.error}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Appearance Section */}
       <section className="space-y-3">

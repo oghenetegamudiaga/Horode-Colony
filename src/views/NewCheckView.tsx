@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { store } from '../lib/store';
 import { StrictnessLevel, LanguageVariant, CheckRecord, SlideData } from '../types';
 import { generateSampleApexCarousel, generateSampleCleanCarousel } from '../lib/goldenSet';
+import { compressImageForAnalysis } from '../lib/imageUtils';
 
 interface NewCheckViewProps {
   onNavigate: (route: string) => void;
@@ -326,12 +327,15 @@ export function NewCheckView({
       store.updateCheck(checkId, { slides: [...completedSlides] });
 
       try {
+        // Compress to ~150-250KB JPEG to stay well within Vercel's 4.5MB limit
+        const optimizedImage = await compressImageForAnalysis(slide.imageUrl);
+
         const response = await fetch('/api/analyze-slide', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageBase64: slide.imageUrl,
-            mimeType: 'image/png',
+            imageBase64: optimizedImage,
+            mimeType: 'image/jpeg',
             strictness: strictLevel,
             languageVariant: langVariant,
             dictionaryTerms,
@@ -341,7 +345,17 @@ export function NewCheckView({
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+          let errorText = `Server error (HTTP ${response.status})`;
+          try {
+            const errJson = await response.json();
+            errorText = errJson.details || errJson.error || errorText;
+          } catch {
+            const raw = await response.text();
+            if (raw.includes('<!doctype') || response.status === 404) {
+              errorText = 'API route not found (404). Check Vercel serverless function deployment.';
+            }
+          }
+          throw new Error(errorText);
         }
 
         const data = await response.json();
@@ -356,7 +370,7 @@ export function NewCheckView({
       } catch (err: any) {
         console.warn(`Slide ${slide.position} analysis failed:`, err);
         slide.status = 'failed';
-        slide.errorMessage = "This slide didn't finish. Try again.";
+        slide.errorMessage = err?.message || "This slide didn't finish. Try again.";
       }
 
       completedSlides[i] = { ...slide };
